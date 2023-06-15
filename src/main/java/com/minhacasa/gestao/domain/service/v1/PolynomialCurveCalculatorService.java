@@ -2,37 +2,50 @@ package com.minhacasa.gestao.domain.service.v1;
 
 import com.minhacasa.gestao.api.v1.controller.dtos.Chart;
 import com.minhacasa.gestao.api.v1.controller.dtos.Coordinate;
+import com.minhacasa.gestao.domain.enums.CurveTypeEnum;
 import net.objecthunter.exp4j.ExpressionBuilder;
+import org.apache.commons.math3.analysis.ParametricUnivariateFunction;
 import org.apache.commons.math3.fitting.PolynomialCurveFitter;
+import org.apache.commons.math3.fitting.SimpleCurveFitter;
 import org.apache.commons.math3.fitting.WeightedObservedPoints;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 
 import static com.minhacasa.gestao.api.v1.controller.dtos.Coordinate.buildCoordinate;
+import static com.minhacasa.gestao.domain.enums.CurveTypeEnum.EXPONENTIAL;
+import static com.minhacasa.gestao.domain.enums.CurveTypeEnum.POLINOMIAL;
 import static com.minhacasa.gestao.domain.utils.NumberUtils.round;
+import static java.util.Collections.emptyList;
 
 @Service
 public class PolynomialCurveCalculatorService {
 
-    private static  String functionLaw;
+    private static String functionLaw;
 
     public PolynomialCurveCalculatorService() {
     }
 
-    public Chart save(double[][] cordinatesInput) {
+    public Chart save(double[][] cordinatesInput, CurveTypeEnum curveType) {
 
         int polynomialDegree = cordinatesInput.length - 1;
-        double[] coefficients = calcularFuncao(cordinatesInput, polynomialDegree);
-        functionLaw = buildFunctionLaw(polynomialDegree, coefficients);
+
+        if (POLINOMIAL.equals(curveType)) {
+            double[] coefficients = polinomialCurveCalculate(cordinatesInput, polynomialDegree);
+            functionLaw = buildPolinomialFunctionLaw(polynomialDegree, coefficients);
+        } else if (EXPONENTIAL.equals(curveType)){
+            double[] bestParamether = exponentialCurveCalculate(cordinatesInput, polynomialDegree);
+            functionLaw = buildExponentialFunctionLaw(bestParamether);
+        } else {
+            return new Chart(emptyList(), "f(x) = Error");
+        }
 
         List<Coordinate> coordinates = new ArrayList<>();
-        for (int i= 0; i < cordinatesInput.length; i++) {
+        for (int i = 0; i < cordinatesInput.length; i++) {
             double x = cordinatesInput[i][0];
 
             double y = calculateY(functionLaw, x);
-            System.out.println("x = " + x + " | y = " + y );
-            coordinates.add(buildCoordinate(x, y,true));
+            coordinates.add(buildCoordinate(x, y, true));
         }
 
         List<Coordinate> lowerCoordinates = buildLowerCoordinates(cordinatesInput);
@@ -46,7 +59,8 @@ public class PolynomialCurveCalculatorService {
     }
 
     private double calculateY(String formula, double x) {
-        Map<String, Double> variables = new HashMap<String, Double>() {};
+        Map<String, Double> variables = new HashMap<String, Double>() {
+        };
         variables.put("x", x);
 
         Set<String> nameOfVariables = new HashSet<>();
@@ -57,12 +71,23 @@ public class PolynomialCurveCalculatorService {
                 .build()
                 .setVariables(variables)
                 .evaluate();
-
-        return round(y);
+        return  Math.round(y);
     }
 
-    private String buildFunctionLaw(int polynomialDegree, double[] coefficients) {
-//        StringBuilder functionLaw = new StringBuilder("f(x) = ");
+    private static double[] polinomialCurveCalculate(double[][] coordenadas, int grauPolinomio) {
+        WeightedObservedPoints points = new WeightedObservedPoints();
+        for (double[] coordenada : coordenadas) {
+            double x = coordenada[0];
+            double y = coordenada[1];
+            points.add(x, y);
+        }
+
+        // Realizar o ajuste de curva polinomial
+        PolynomialCurveFitter fitter = PolynomialCurveFitter.create(grauPolinomio);
+        return fitter.fit(points.toList());
+    }
+
+    private String buildPolinomialFunctionLaw(int polynomialDegree, double[] coefficients) {
         StringBuilder functionLaw = new StringBuilder();
 
         for (int i = 0; i <= polynomialDegree; i++) {
@@ -74,59 +99,49 @@ public class PolynomialCurveCalculatorService {
         return functionLaw.toString();
     }
 
-
-    private static double[] calcularFuncao(double[][] coordenadas, int grauPolinomio) {
-        WeightedObservedPoints pontosObservados = new WeightedObservedPoints();
+    private static double[] exponentialCurveCalculate(double[][] coordenadas, int grauPolinomio) {
+        WeightedObservedPoints points = new WeightedObservedPoints();
         for (double[] coordenada : coordenadas) {
             double x = coordenada[0];
             double y = coordenada[1];
-            pontosObservados.add(x, y);
+            points.add(x, y);
         }
 
-        // Realizar o ajuste de curva polinomial
-        PolynomialCurveFitter fitter = PolynomialCurveFitter.create(grauPolinomio);
-        return fitter.fit(pontosObservados.toList());
+        ParametricUnivariateFunction function = new ParametricUnivariateFunction() {
+            @Override
+            public double value(double x, double... parameters) {
+                return parameters[0] * Math.exp(parameters[1] * x);
+            }
+
+            @Override
+            public double[] gradient(double x, double... parameters) {
+                double[] gradient = new double[parameters.length];
+                gradient[0] = Math.exp(parameters[1] * x);
+                gradient[1] = parameters[0] * x * Math.exp(parameters[1] * x);
+                return gradient;
+            }
+        };
+
+        SimpleCurveFitter fitter = SimpleCurveFitter.create(function, new double[]{1.0, 1.0});
+
+        return fitter.fit(points.toList());
     }
 
-    private void buildCoordinatesCurve(double[][] coordinatesInput, String functionLaw) {
-//        List<Coordinate> coordinates = new ArrayList<>();
-//        double minValue = Double.MAX_VALUE;
-//        double maxValue = Double.MIN_VALUE;
-//
-//        for (double[] row : coordinatesInput) {
-//            for (double value : row) {
-//                if (value < minValue) {
-//                    minValue = (int) value;
-//                }
-//            }
-//        }
-//
-//        for (double[] row : coordinatesInput) {
-//            for (double value : row) {
-//                if (value > maxValue) {
-//                    maxValue = (int) value;
-//                }
-//            }
-//        }
-//
-//        minValue = minValue * -7;
-//        maxValue = maxValue * 7;
-//
-//        for (double i = minValue; i <= coordinatesInput.length; i = i + 5) {
-//            coordinates.add(Coordinate.build());
-//        }
+    private String buildExponentialFunctionLaw(double[] bestParameters) {
+        //double y = melhoresParametros[0] * Math.exp(melhoresParametros[1] * x);
+        return bestParameters[0] + " * exp(" + bestParameters[1] + " * x)";
     }
 
     private List<Coordinate> superiorCoordinates(double[][] cordinatesInput) {
 
         int lowerCoordinatesNumber = (21 - cordinatesInput.length) / 2;
-        double firstX = cordinatesInput[cordinatesInput.length-1][0];
-        double position = firstX+1;
+        double firstX = cordinatesInput[cordinatesInput.length - 1][0];
+        double position = firstX + 1;
 
         List<Coordinate> coordinates = new ArrayList<>();
         for (int i = 0; (i < lowerCoordinatesNumber && position > firstX); i++) {
-            coordinates.add(buildCoordinate(position, calculateY(functionLaw, position),false));
-            position = position+1;
+            coordinates.add(buildCoordinate(position, calculateY(functionLaw, position), false));
+            position = position + 1;
         }
 
         return coordinates;
@@ -136,12 +151,12 @@ public class PolynomialCurveCalculatorService {
 
         int lowerCoordinatesNumber = (21 - cordinatesInput.length) / 2;
         double firstX = cordinatesInput[0][0];
-        double position = firstX-1;
+        double position = firstX - 1;
 
         List<Coordinate> coordinates = new ArrayList<>();
         for (int i = 0; (i < lowerCoordinatesNumber && position < firstX); i++) {
-            coordinates.add(buildCoordinate(position, calculateY(functionLaw, position),false));
-            position = position-1;
+            coordinates.add(buildCoordinate(position, calculateY(functionLaw, position), false));
+            position = position - 1;
         }
 
         Collections.reverse(coordinates);
